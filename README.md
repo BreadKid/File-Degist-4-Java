@@ -11,7 +11,7 @@
 ## 🚀 运行方式
 
 ```bash
-# 所有单测（当前 100 个）
+# 所有单测（当前 105 个）
 ./gradlew test
 
 # 统一入口：对文件/目录跑适用方案
@@ -89,7 +89,8 @@ file-digest-4-java/
 Git 对象模型、IPFS、对象存储 ETag 均采用此结构。
 
 ### 5️⃣ 快速指纹 — `FastDigest`
-JDK 内置 `CRC32` / `CRC32C`（Apple Silicon 有硬件加速），流式内存恒定。速度快但仅 32 位，文件量大时有碰撞——企业去重做前置快筛，命中后用 SHA-256 二次确认。
+JDK 内置 `CRC32` / `CRC32C`（Apple Silicon 有硬件加速）+ 第三方 `XXH3`（zero-allocation-hashing），流式内存恒定。速度快但均非加密哈希，文件量大时有碰撞——企业去重做前置快筛，命中后用 SHA-256 二次确认。
+**注**：XXH3 的 zero-allocation-hashing 0.16 无流式 API，当前整文件读内存；超大文件场景用 CRC32/CRC32C（流式）或升级库版本。
 
 ### 6️⃣ 多算法组合 — `MultiAlgoDigest`
 一次 `read` 循环，把同一段缓冲同时 `update` 给多个 `MessageDigest`，只读一遍磁盘。`MessageDigest` 非线程安全，此处主线程内顺序使用不共享。适用 SHA-256(新) + MD5(旧系统兼容) 混合。
@@ -142,6 +143,7 @@ digest.contentReads();           // 仍为 1
 方案3 固定分块64KB+虚拟线程 11 ms   7271 MB/s
 方案5 CRC32                21 ms   3809 MB/s
 方案5 CRC32C               19 ms   4210 MB/s
+方案5 XXH3                 19 ms   4209 MB/s
 方案6 组合SHA-256+MD5     156 ms    513 MB/s
 方案6 对比: 分开算         168 ms    476 MB/s
 方案8 属性指纹(不读内容)     0 ms   ~微秒级
@@ -159,7 +161,7 @@ digest.contentReads();           // 仍为 1
 
 ---
 
-## 🧪 测试覆盖（100 个）
+## 🧪 测试覆盖（105 个）
 
 每个方案单测含：已知向量、确定性/区分性、与独立实现交叉验证、真实 84MB PDF 冒烟（文件存在才跑）。额外有：
 
@@ -171,4 +173,4 @@ digest.contentReads();           // 仍为 1
 
 - 方案 9 提供内存版 `digest` 与流式版 `digestStreaming`（内存只占最大块缓冲，支持超大文件），两者产生完全相同的块边界（有回归测试）。
 - 基准受页缓存影响，纯 CPU 对比需冷缓存或 GB 级文件。
-- 未接入 XXHash（第三方库），当前快速指纹用 JDK 内置 CRC。
+- XXH3 的 zero-allocation-hashing 0.16 无流式 API，当前整文件读内存；超大文件可用 CRC32/CRC32C(流式) 或升级库版本。

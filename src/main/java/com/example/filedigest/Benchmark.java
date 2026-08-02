@@ -47,6 +47,7 @@ public final class Benchmark {
         bench("方案3 分块64KB+虚拟线程", () -> FixedChunkDigest.digest(path, 64 * 1024, "SHA-256"), size);
         bench("方案5 CRC32", () -> FastDigest.crc32(path), size);
         bench("方案5 CRC32C", () -> FastDigest.crc32c(path), size);
+        bench("方案5 XXH3", () -> FastDigest.xxh3(path), size);
         // 单次 I/O 同时算 SHA-256+MD5，对比"读两遍"分算
         bench("方案6 组合 SHA-256+MD5(单次I/O)", () -> MultiAlgoDigest.digestSha256AndMd5(path), size);
         bench("方案6 对比: 分开算 SHA-256+MD5", () -> {

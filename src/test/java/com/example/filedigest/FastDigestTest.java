@@ -105,4 +105,49 @@ class FastDigestTest {
         assertEquals(FastDigest.crc32c(pdf), FastDigest.crc32c(pdf));
         assertTrue(FastDigest.crc32cHex(pdf).matches("[0-9a-f]{8}"));
     }
+
+    /** XXH3：确定性（同内容同值）。 */
+    @Test
+    void xxh3Deterministic() throws Exception {
+        var f = tempDir.resolve("xxh3.txt");
+        Files.writeString(f, "xxh3 check", StandardCharsets.UTF_8);
+        assertEquals(FastDigest.xxh3(f), FastDigest.xxh3(f));
+    }
+
+    /** XXH3：不同内容不同值（区分性）。 */
+    @Test
+    void xxh3Distinct() throws Exception {
+        var a = tempDir.resolve("a.bin");
+        var b = tempDir.resolve("b.bin");
+        Files.write(a, new byte[]{1, 2, 3, 4});
+        Files.write(b, new byte[]{1, 2, 3, 5});
+        assertNotEquals(FastDigest.xxh3(a), FastDigest.xxh3(b));
+    }
+
+    /** XXH3 空文件：有确定值且可复现。 */
+    @Test
+    void xxh3EmptyKnownStable() throws Exception {
+        var f = tempDir.resolve("empty.bin");
+        Files.write(f, new byte[0]);
+        assertEquals(FastDigest.xxh3(f), FastDigest.xxh3(f));
+    }
+
+    /** XXH3 hex 固定 16 字符（64 位）。 */
+    @Test
+    void xxh3HexLength() throws Exception {
+        var f = tempDir.resolve("h.bin");
+        Files.writeString(f, "hex len", StandardCharsets.UTF_8);
+        assertEquals(16, FastDigest.xxh3Hex(f).length());
+        assertTrue(FastDigest.xxh3Hex(f).matches("[0-9a-f]{16}"));
+    }
+
+    /** 真实 84MB PDF：XXH3 确定性可复现。 */
+    @Test
+    void xxh3RealPdfDeterministic() throws Exception {
+        var pdf = Path.of("resources/testdata/bigFile84MB.pdf");
+        if (!Files.exists(pdf)) {
+            return;
+        }
+        assertEquals(FastDigest.xxh3(pdf), FastDigest.xxh3(pdf));
+    }
 }

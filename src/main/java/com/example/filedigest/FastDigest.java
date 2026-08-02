@@ -55,6 +55,16 @@ public final class FastDigest {
         return crc.getValue();
     }
 
+    /**
+     * 用 XXH3-64 计算（zero-allocation-hashing 0.16 无流式 API，故整文件读入内存一次性算）。
+     * XXH3 是现代 xxHash 演进，速度极快、碰撞率低于 CRC32。
+     * 注：为内存恒定，超大文件场景应改用 CRC32/CRC32C(流式) 或升级支持流式的库版本。
+     */
+    public static long xxh3(Path path) throws IOException {
+        var data = Files.readAllBytes(path);
+        return net.openhft.hashing.LongHashFunction.xx3().hashBytes(data);
+    }
+
     /** 16 进制形式（小写）。CRC32 为 8 字符。 */
     public static String crc32Hex(Path path) throws IOException {
         return String.format("%08x", crc32(path));
@@ -63,5 +73,10 @@ public final class FastDigest {
     /** 16 进制形式（小写）。 */
     public static String crc32cHex(Path path) throws IOException {
         return String.format("%08x", crc32c(path));
+    }
+
+    /** XXH3 16 进制形式（小写），64 位为 16 字符。 */
+    public static String xxh3Hex(Path path) throws IOException {
+        return String.format("%016x", xxh3(path));
     }
 }

@@ -11,7 +11,7 @@
 ## 🚀 运行方式
 
 ```bash
-# 所有单测（当前 89 个）
+# 所有单测（当前 95 个）
 ./gradlew test
 
 # 统一入口：对文件/目录跑适用方案
@@ -42,10 +42,12 @@ file-digest-4-java/
     ├── DirectoryDigest.java      # 方案 7
     ├── AttributeDigest.java      # 方案 8
     ├── CdcDigest.java            # 方案 9 (FastCDC)
+    ├── SmartFileDigest.java      # 内存阈值自动降级（内存版/流式版自适应）
     └── TwoLevelDigest.java       # 两级指纹编排（L1 哨兵 + L2 精确）
 └── src/test/java/com/example/filedigest/
     ├── *Test.java                # 每个方案的单测
     ├── FileDigestContractTest.java # 跨方案参数契约
+    ├── SmartFileDigestTest.java  # 阈值降级 + 三实现结果一致
     └── TwoLevelDigestTest.java   # 两级编排（含篡改局限回归）
 ```
 
@@ -70,7 +72,7 @@ file-digest-4-java/
 ## ⚙️ 方案实现与设计要点
 
 ### 1️⃣ 小文件 / 内存可放 — `SmallFileDigest`
-整文件 `readAllBytes` 后一次 `digest`。简单直接，但大文件/高并发易 OOM。企业落地应设内存阈值，超限自动降级到方案 2。
+整文件 `readAllBytes` 后一次 `digest`。简单直接，但大文件/高并发易 OOM。企业落地用 **`SmartFileDigest` 内存阈值自动降级**：`size ≤ 阈值` 走内存版，超过自动切流式（方案 2）防 OOM，调用方无需关心文件大小。
 
 ### 2️⃣ 大文件 / 流式 — `StreamingDigest`
 固定 8KB 缓冲循环 `update(buf, 0, len)`。**关键**：只喂实际读到的长度，避免末次半满缓冲混入脏字节。内存恒定，是方案 1 的流式版。单测用 1 字节缓冲强迫大量循环验证无丢字节。
@@ -154,7 +156,7 @@ digest.contentReads();           // 仍为 1
 
 ---
 
-## 🧪 测试覆盖（89 个）
+## 🧪 测试覆盖（95 个）
 
 每个方案单测含：已知向量、确定性/区分性、与独立实现交叉验证、真实 84MB PDF 冒烟（文件存在才跑）。额外有：
 

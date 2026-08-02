@@ -40,6 +40,7 @@ public final class TwoLevelDigest {
 
     /**
      * 两级解析：返回文件内容哈希，尽量命中 L1 哨兵以减少读盘。
+     * 并发安全：compute 原子化，保证同一文件在并发首次访问时最多读盘一次。
      *
      * @param path      文件路径
      * @param algorithm 哈希算法（内容哈希与属性哨兵都用它）
@@ -48,18 +49,31 @@ public final class TwoLevelDigest {
     public Resolution resolve(Path path, String algorithm)
             throws IOException, NoSuchAlgorithmException {
         var attr = AttributeDigest.digest(path, algorithm);
+        // compute 对该 key 原子化：记录本次是否命中缓存(未读盘)
+        var hit = new boolean[]{false};
 
-        var cached = cache.get(path);
-        if (cached != null && cached.attrFingerprint().equals(attr)) {
-            // L1 命中：属性未变，复用缓存的完整哈希，零读盘
-            return new Resolution(cached.contentHash(), true, attr);
+        var entry = cache.compute(path, (k, cached) -> {
+            if (cached != null && cached.attrFingerprint().equals(attr)) {
+                hit[0] = true;   // L1 命中，缓存不变，零读盘
+                return cached;
+            }
+            contentReads.incrementAndGet();   // 首次/变更，读盘一次
+            try {
+                return new CacheEntry(attr, StreamingDigest.digest(path, algorithm));
+            } catch (IOException | NoSuchAlgorithmException e) {
+                // compute 的映射函数不能抛 checked 异常，包装后在外层解包
+                throw new UncheckedDigestException(e);
+            }
+        });
+
+        return new Resolution(entry.contentHash(), hit[0], attr);
+    }
+
+    /** 包装 checked 异常的运行时异常，用于通过 compute 映射函数的限制。 */
+    private static final class UncheckedDigestException extends RuntimeException {
+        UncheckedDigestException(Exception cause) {
+            super(cause);
         }
-
-        // L2 升级：属性变了或首次，读全内容算精确哈希
-        var contentHash = StreamingDigest.digest(path, algorithm);
-        cache.put(path, new CacheEntry(attr, contentHash));
-        contentReads.incrementAndGet();
-        return new Resolution(contentHash, false, attr);
     }
 
     /** 累计实际读盘的次数（L2 触发次数）。 */

@@ -11,7 +11,7 @@
 ## 🚀 运行方式
 
 ```bash
-# 所有单测（当前 95 个）
+# 所有单测（当前 100 个）
 ./gradlew test
 
 # 统一入口：对文件/目录跑适用方案
@@ -48,7 +48,8 @@ file-digest-4-java/
     ├── *Test.java                # 每个方案的单测
     ├── FileDigestContractTest.java # 跨方案参数契约
     ├── SmartFileDigestTest.java  # 阈值降级 + 三实现结果一致
-    └── TwoLevelDigestTest.java   # 两级编排（含篡改局限回归）
+    ├── TwoLevelDigestTest.java   # 两级编排（含篡改局限回归）
+    └── TwoLevelDigestConcurrencyTest.java # 并发压力（只读盘一次）
 ```
 
 ---
@@ -123,6 +124,8 @@ digest.contentReads();           // 仍为 1
 
 **局限（必须知晓）**：L1 只是哨兵，不防篡改——若修改内容并还原 mtime+size，L1 会误判为"未变"而错误复用旧哈希（`TwoLevelDigestTest.tamperWithSameAttrsIsNotDetected` 固化了此行为）。L1 用于成本控制，L2 才是最终信任锚点，安全敏感场景应加"定期强制 L2"。
 
+**并发安全**：`resolve` 用 `compute` 原子化，保证同一文件在并发首次访问时**最多读盘一次**（`TwoLevelDigestConcurrencyTest` 用 32 线程验证只读 1 次、64 线程命中零新增读盘、84MB PDF 并发只读一次）。
+
 避免每次同步/上传都对全量读盘，是云盘、备份、对象存储的高性价比落地方式。
 
 ---
@@ -156,7 +159,7 @@ digest.contentReads();           // 仍为 1
 
 ---
 
-## 🧪 测试覆盖（95 个）
+## 🧪 测试覆盖（100 个）
 
 每个方案单测含：已知向量、确定性/区分性、与独立实现交叉验证、真实 84MB PDF 冒烟（文件存在才跑）。额外有：
 

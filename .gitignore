@@ -1,0 +1,22 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# 本地工具配置
+.claude/
+
+# macOS
+.DS_Store
+
+# 测试大文件（不追踪，避免仓库膨胀）
+resources/testdata/
+
+# 临时
+out/

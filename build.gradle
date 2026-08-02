@@ -1,0 +1,39 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.example'
+version = '0.1.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+    mainClass = 'com.example.filedigest.FileDigest'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// 轻量性能基准：./gradlew benchmark --args="<filePath>"
+tasks.register('benchmark', JavaExec) {
+    group = 'benchmark'
+    description = 'Run throughput benchmark of the digest schemes'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.example.filedigest.Benchmark'
+}

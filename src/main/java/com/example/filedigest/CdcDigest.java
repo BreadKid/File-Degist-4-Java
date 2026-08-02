@@ -43,8 +43,14 @@ public final class CdcDigest {
     public static final String DEFAULT_ALGORITHM = "SHA-256";
 
     /**
-     * 流式 CDC 分块：边读边扫描，内存只占"最大块大小"的缓冲，
-     * 可处理超出内存的超大文件。产生与内存版(digest)完全相同的块边界。
+     * 流式 CDC 分块：免拷贝优化版。
+     *
+     * 核心：滚动哈希直接在大读缓冲(readBuf)上逐字节扫描，绝大多数"完整落在
+     * 单个 readBuf 内"的块直接 md.update(buf, off, len) 免拷贝；只有跨缓冲
+     * 边界的块（占比 ≈ maxSize/readBuf，约 0.8%）才累积拼接。
+     * 内存恒定 = maxSize(跨缓冲前缀) + readBuf。
+     *
+     * 产生与内存版(digest)完全相同的块边界（有回归测试兜底）。
      *
      * @param path      文件路径
      * @param minSize   最小块大小(字节)
@@ -58,39 +64,99 @@ public final class CdcDigest {
         validate(minSize, avgSize, maxSize, algorithm);
 
         var chunkHashes = new ArrayList<String>();
-        var buf = new byte[maxSize];
-        var md = MessageDigest.getInstance(algorithm);
-        long fp = 0;
-        int chunkLen = 0;   // 当前块已累积字节数
+        var md = MessageDigest.getInstance(algorithm);   // 单实例，reset 复用
+
+        byte[] acc = new byte[maxSize];   // 跨缓冲块的累积前缀
+        int accLen = 0;                   // acc 有效长度
+        long fp = 0;                      // 当前块滚动哈希（跨缓冲连续）
+        int curLen = 0;                   // 当前块总长（含 acc 前缀）
         boolean any = false;
 
-        try (var in = new java.io.BufferedInputStream(Files.newInputStream(path))) {
-            int b;
-            while ((b = in.read()) != -1) {
+        var buf = new byte[8 * 1024 * 1024];   // 大读缓冲，免拷贝主要收益来源
+        try (var in = Files.newInputStream(path)) {
+            int n;
+            while ((n = in.read(buf)) != -1) {
                 any = true;
-                buf[chunkLen] = (byte) b;
-                chunkLen++;
-                fp = (fp << 1) + GEAR[b & 0xFF];
-
-                boolean cut = false;
-                if (chunkLen >= minSize && (fp & cutMask(chunkLen, avgSize)) == 0) {
-                    cut = true;         // 内容定义边界
-                } else if (chunkLen >= maxSize) {
-                    cut = true;         // 最大块兜底强制切
-                }
-                if (cut) {
-                    md.update(buf, 0, chunkLen);
-                    chunkHashes.add(HexFormat.of().formatHex(md.digest()));
-                    md.reset();
-                    fp = 0;
-                    chunkLen = 0;
+                int i = 0;
+                while (i < n) {
+                    if (accLen == 0) {
+                        // 当前块起点在本缓冲 buf[i]，块内无跨缓冲前缀
+                        long f = 0;
+                        int start = i;
+                        int cut = -1;
+                        int len = 0;
+                        for (; i < n; i++) {
+                            int b = buf[i] & 0xFF;
+                            len++;
+                            f = (f << 1) + GEAR[b];
+                            if (len >= minSize && (f & cutMask(len, avgSize)) == 0) {
+                                cut = i;
+                                break;
+                            }
+                            if (len >= maxSize) {
+                                cut = i;
+                                break;
+                            }
+                        }
+                        if (cut >= 0) {
+                            // 完整块在本缓冲内，免拷贝直接 update 区间
+                            md.update(buf, start, cut - start + 1);
+                            chunkHashes.add(HexFormat.of().formatHex(md.digest()));
+                            md.reset();
+                            i = cut + 1;      // 新块从 cut+1 开始
+                        } else {
+                            // 扫到缓冲末尾未切块，前缀进入 acc，跨缓冲待续
+                            int plen = n - start;
+                            System.arraycopy(buf, start, acc, 0, plen);
+                            accLen = plen;
+                            fp = f;
+                            curLen = len;
+                            i = n;
+                        }
+                    } else {
+                        // 跨缓冲：已有 acc 前缀，fp 连续，本缓冲从 i 续扫
+                        int start = i;
+                        int cut = -1;
+                        for (; i < n; i++) {
+                            int b = buf[i] & 0xFF;
+                            curLen++;
+                            fp = (fp << 1) + GEAR[b];
+                            if (curLen >= minSize && (fp & cutMask(curLen, avgSize)) == 0) {
+                                cut = i;
+                                break;
+                            }
+                            if (curLen >= maxSize) {
+                                cut = i;
+                                break;
+                            }
+                        }
+                        if (cut >= 0) {
+                            // 块 = acc 前缀 + buf[start..cut]，跨缓冲需拼接
+                            md.update(acc, 0, accLen);
+                            md.update(buf, start, cut - start + 1);
+                            chunkHashes.add(HexFormat.of().formatHex(md.digest()));
+                            md.reset();
+                            accLen = 0;
+                            fp = 0;
+                            curLen = 0;
+                            i = cut + 1;
+                        } else {
+                            // 本缓冲全续进 acc
+                            System.arraycopy(buf, start, acc, accLen, n - start);
+                            accLen += (n - start);
+                            i = n;   // fp、curLen 保留跨缓冲
+                        }
+                    }
                 }
             }
         }
 
-        // 收尾：EOF 时残留的不足一块（含空文件 -> 1 块空串哈希，与内存版一致）
-        if (chunkLen > 0 || !any) {
-            md.update(buf, 0, chunkLen);
+        // 收尾：EOF 残留
+        if (accLen > 0) {
+            md.update(acc, 0, accLen);
+            chunkHashes.add(HexFormat.of().formatHex(md.digest()));
+        } else if (!any) {
+            // 空文件 -> 1 块空串哈希（与内存版一致）
             chunkHashes.add(HexFormat.of().formatHex(md.digest()));
         }
 

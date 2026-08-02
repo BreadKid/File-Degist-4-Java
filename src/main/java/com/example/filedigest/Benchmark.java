@@ -55,6 +55,11 @@ public final class Benchmark {
         }, size);
         // 方案8 只读元信息，不读内容，应极快（~微秒级）
         bench("方案8 属性指纹(不读内容)", () -> AttributeDigest.digest(path, "SHA-256"), size);
+        // 方案9 CDC：内存版 vs 流式版
+        bench("方案9 CDC(内存版)", () -> CdcDigest.digest(path), size);
+        bench("方案9 CDC(流式版)", () -> CdcDigest.digestStreaming(path,
+                CdcDigest.DEFAULT_MIN, CdcDigest.DEFAULT_AVG, CdcDigest.DEFAULT_MAX,
+                CdcDigest.DEFAULT_ALGORITHM), size);
     }
 
     private static void bench(String name, ThrowingRunnable task, long bytes) throws Exception {

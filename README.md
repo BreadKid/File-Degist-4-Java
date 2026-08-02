@@ -11,7 +11,7 @@
 ## 🚀 运行方式
 
 ```bash
-# 所有单测（当前 80 个）
+# 所有单测（当前 89 个）
 ./gradlew test
 
 # 统一入口：对文件/目录跑适用方案
@@ -41,10 +41,12 @@ file-digest-4-java/
     ├── MultiAlgoDigest.java      # 方案 6
     ├── DirectoryDigest.java      # 方案 7
     ├── AttributeDigest.java      # 方案 8
-    └── CdcDigest.java            # 方案 9 (FastCDC)
+    ├── CdcDigest.java            # 方案 9 (FastCDC)
+    └── TwoLevelDigest.java       # 两级指纹编排（L1 哨兵 + L2 精确）
 └── src/test/java/com/example/filedigest/
     ├── *Test.java                # 每个方案的单测
-    └── FileDigestContractTest.java # 跨方案参数契约
+    ├── FileDigestContractTest.java # 跨方案参数契约
+    └── TwoLevelDigestTest.java   # 两级编排（含篡改局限回归）
 ```
 
 ---
@@ -103,10 +105,21 @@ Gear 滚动哈希 `fp = (fp<<1) + GEAR[byte]` 扫描，由内容定变长块边�
 
 ## 🧭 两级指纹编排（企业真实用法）
 
-单一算法不够，企业用分层组合权衡成本与准确率。`FileDigest` 中示范：
+单一算法不够，企业用分层组合权衡成本与准确率。**独立类 `TwoLevelDigest`** 封装了这套逻辑（`FileDigest` 也有简版示范）：
 
-1. **前置哨兵（~0ms）**：方案 8 属性指纹（size + mtime），未变 → 直接复用旧指纹，不读内容。
-2. **升级精确（读盘）**：哨兵命中"疑似变更" → 升级到方案 2 全内容 SHA-256 或方案 9 CDC 精确比对。
+- **L1 前置哨兵（~0ms）**：方案 8 属性指纹（size + mtime），不读内容。
+- **L2 精确校验（读盘）**：方案 2 流式 SHA-256，仅当 L1 未命中才触发。
+- **流程**：算属性指纹 → 与缓存比对（未变则复用哈希、零 I/O）→ 变了或首次才升级读全内容。
+- **量化**：`contentReads()` 记录实际读盘次数，可对比省了多少 I/O。
+
+```java
+var digest = new TwoLevelDigest();
+digest.resolve(path, "SHA-256"); // 首次：读盘 1 次
+digest.resolve(path, "SHA-256"); // 未变：命中 L1 缓存，0 读盘
+digest.contentReads();           // 仍为 1
+```
+
+**局限（必须知晓）**：L1 只是哨兵，不防篡改——若修改内容并还原 mtime+size，L1 会误判为"未变"而错误复用旧哈希（`TwoLevelDigestTest.tamperWithSameAttrsIsNotDetected` 固化了此行为）。L1 用于成本控制，L2 才是最终信任锚点，安全敏感场景应加"定期强制 L2"。
 
 避免每次同步/上传都对全量读盘，是云盘、备份、对象存储的高性价比落地方式。
 
@@ -138,7 +151,7 @@ Gear 滚动哈希 `fp = (fp<<1) + GEAR[byte]` 扫描，由内容定变长块边�
 
 ---
 
-## 🧪 测试覆盖（80 个）
+## 🧪 测试覆盖（89 个）
 
 每个方案单测含：已知向量、确定性/区分性、与独立实现交叉验证、真实 84MB PDF 冒烟（文件存在才跑）。额外有：
 

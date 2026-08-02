@@ -134,7 +134,7 @@ digest.contentReads();           // 仍为 1
 方案2 流式(8KB)             42 ms   1904 MB/s
 方案3 固定分块4MB+虚拟线程   9 ms   8887 MB/s
 方案3 固定分块1MB+虚拟线程   9 ms   8887 MB/s
-方案3 固定分块64KB+虚拟线程 16 ms   4999 MB/s
+方案3 固定分块64KB+虚拟线程 11 ms   7271 MB/s
 方案5 CRC32                21 ms   3809 MB/s
 方案5 CRC32C               19 ms   4210 MB/s
 方案6 组合SHA-256+MD5     156 ms    513 MB/s

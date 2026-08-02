@@ -64,31 +64,31 @@ public final class FixedChunkDigest {
             throw new IllegalArgumentException("algorithm must not be null/blank");
         }
 
-        long fileSize;
+        // 共享一个 FileChannel，所有虚拟线程用"定位读"并发访问，避免每块 open/close
         try (var ch = FileChannel.open(path)) {
-            fileSize = ch.size();
-        }
-
-        int numChunks = (int) ((fileSize + chunkSize - 1) / chunkSize);
-        if (numChunks == 0) {
-            numChunks = 1; // 空文件也产生 1 块
-        }
-
-        // 每个虚拟线程负责读+哈希一个块，结果按块序号收集
-        var results = new String[numChunks];
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var futures = new Future<?>[numChunks];
-            for (int i = 0; i < numChunks; i++) {
-                final int idx = i;
-                futures[i] = executor.submit(() -> results[idx] = hashChunk(path, idx, chunkSize, algorithm));
+            int numChunks = (int) ((ch.size() + chunkSize - 1) / chunkSize);
+            if (numChunks == 0) {
+                numChunks = 1; // 空文件也产生 1 块
             }
-            for (var f : futures) {
-                f.get(); // 等所有块算完（虚拟线程数量=块数，无池化阻塞）
-            }
-        }
 
-        var chunkHashes = List.of(results);
-        return new Result(chunkHashes, hashChunkList(chunkHashes, algorithm));
+            // 每个虚拟线程负责读+哈希一个块，结果按块序号收集
+            var results = new String[numChunks];
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                var futures = new Future<?>[numChunks];
+                for (int i = 0; i < numChunks; i++) {
+                    final int idx = i;
+                    // 共享 channel + 定位读（ch.read(buf, pos) 线程安全，不移动位置游标）
+                    futures[i] = executor.submit(
+                            () -> results[idx] = hashChunk(ch, idx, chunkSize, algorithm));
+                }
+                for (var f : futures) {
+                    f.get(); // 等所有块算完（虚拟线程数量=块数，无池化阻塞）
+                }
+            }
+
+            var chunkHashes = List.of(results);
+            return new Result(chunkHashes, hashChunkList(chunkHashes, algorithm));
+        }
     }
 
     /** 便捷入口：默认 4MB 分块 + SHA-256。 */
@@ -99,25 +99,24 @@ public final class FixedChunkDigest {
 
     /**
      * 读取并哈希单个块。
-     * 用 FileChannel 按 position 精确定位，每个虚拟线程只读自己的区间。
+     * 用共享 FileChannel 的"定位读"（不移动位置游标），
+     * 每个虚拟线程只读自己的区间，并发安全。
      */
-    private static String hashChunk(Path path, int index, int chunkSize, String algorithm)
+    private static String hashChunk(FileChannel ch, int index, int chunkSize, String algorithm)
             throws IOException, NoSuchAlgorithmException {
         var md = MessageDigest.getInstance(algorithm);
         long start = (long) index * chunkSize;
+        long remaining = ch.size() - start;
+        int toRead = (int) Math.min(chunkSize, remaining);
 
-        try (var ch = FileChannel.open(path)) {
-            long remaining = ch.size() - start;
-            long toRead = Math.min(chunkSize, remaining);
-            var buf = ByteBuffer.allocate((int) toRead);
-            ch.position(start);
-            while (buf.hasRemaining()) {
-                int n = ch.read(buf);
-                if (n < 0) break;
-            }
-            buf.flip();
-            md.update(buf);
+        // 定位读：每次从绝对位置 start 起读，线程安全、不改变 channel 位置游标
+        var buf = ByteBuffer.allocate(toRead);
+        while (buf.hasRemaining()) {
+            int n = ch.read(buf, start + buf.position());
+            if (n < 0) break;
         }
+        buf.flip();
+        md.update(buf);
         return HexFormat.of().formatHex(md.digest());
     }
 
